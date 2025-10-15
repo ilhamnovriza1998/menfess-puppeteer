@@ -1,104 +1,60 @@
-const express = require("express");
-const puppeteer = require("puppeteer");
-const fs = require("fs");
-const multer = require("multer");
+import express from "express";
+import puppeteer from "puppeteer";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.use(express.json({ limit: "10mb" }));
 
-// setup multer untuk upload file foto
-const upload = multer({ dest: "uploads/" });
+const username = process.env.X_USERNAME;
+const password = process.env.X_PASSWORD;
 
-// endpoint root
-app.get("/", (req, res) => {
-  res.send("🚀 Menfess Puppeteer aktif! Gunakan POST /post untuk kirim tweet otomatis.");
-});
+// 🧠 Fungsi utama untuk posting ke X
+async function postToTwitter(text) {
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+  const page = await browser.newPage();
 
-// === POST /post ===
-// form-data: { text: "isi tweet", image: (file optional) }
-app.post("/post", upload.single("image"), async (req, res) => {
-  const { text } = req.body;
-  const imagePath = req.file ? req.file.path : null;
+  console.log("🔹 Membuka Twitter...");
+  await page.goto("https://x.com/login", { waitUntil: "networkidle2" });
 
-  if (!text) {
-    return res.status(400).json({ error: "Teks tidak boleh kosong" });
-  }
+  await page.waitForSelector('input[autocomplete="username"]', { visible: true });
+  await page.type('input[autocomplete="username"]', username);
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(2000);
 
+  await page.waitForSelector('input[name="password"]', { visible: true });
+  await page.type('input[name="password"]', password);
+  await page.keyboard.press("Enter");
+  await page.waitForNavigation({ waitUntil: "networkidle2" });
+
+  console.log("✅ Login berhasil, menulis tweet...");
+
+  await page.waitForSelector('div[aria-label="Post text"]', { visible: true });
+  await page.click('div[aria-label="Post text"]');
+  await page.keyboard.type(text);
+
+  await page.waitForSelector('div[data-testid="tweetButtonInline"]', { visible: true });
+  await page.click('div[data-testid="tweetButtonInline"]');
+
+  console.log("🎉 Tweet terkirim:", text);
+  await browser.close();
+}
+
+// 🛰️ Endpoint untuk menerima kiriman dari web kamu
+app.post("/post", async (req, res) => {
   try {
-    console.log("🔹 Membuka browser...");
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: "Teks tidak boleh kosong" });
 
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
-
-    // ====== LOGIN KE X ======
-    console.log("🔹 Login ke X...");
-    await page.goto("https://x.com/login", { waitUntil: "networkidle2" });
-
-    // Ganti ini dengan username & password akun Menfess kamu
-    const USERNAME = process.env.X_USERNAME || "username_kamu";
-    const PASSWORD = process.env.X_PASSWORD || "password_kamu";
-
-    // Tunggu input user muncul
-    await page.waitForSelector('input[name="text"], input[name="session[username_or_email]"]', { timeout: 20000 });
-
-    // Isi username
-    await page.type('input[name="text"], input[name="session[username_or_email]"]', USERNAME);
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(2000);
-
-    // Jika muncul input password (kadang langsung kadang lewat step 2)
-    try {
-      await page.waitForSelector('input[name="password"]', { timeout: 5000 });
-    } catch {}
-    await page.type('input[name="password"]', PASSWORD);
-    await page.keyboard.press("Enter");
-
-    // Tunggu halaman utama selesai
-    await page.waitForNavigation({ waitUntil: "networkidle2" });
-    console.log("✅ Login sukses");
-
-    // ====== MULAI POSTING ======
-    console.log("📝 Membuat postingan...");
-    await page.goto("https://x.com/compose/tweet", { waitUntil: "networkidle2" });
-    await page.waitForSelector('div[aria-label="Post text"]', { timeout: 15000 });
-
-    await page.type('div[aria-label="Post text"]', text);
-
-    // Jika ada gambar, upload juga
-    if (imagePath) {
-      const [fileChooser] = await Promise.all([
-        page.waitForFileChooser(),
-        page.click('div[aria-label="Add photos or video"]'),
-      ]);
-      await fileChooser.accept([imagePath]);
-      console.log("📸 Gambar ditambahkan");
-    }
-
-    // Klik tombol Post
-    await page.waitForTimeout(2000);
-    const postButton = await page.$('div[data-testid="tweetButtonInline"]');
-    if (postButton) {
-      await postButton.click();
-      console.log("🚀 Tweet dikirim!");
-    } else {
-      throw new Error("Tombol Post tidak ditemukan");
-    }
-
-    await page.waitForTimeout(5000);
-    await browser.close();
-
-    // hapus file upload kalau ada
-    if (imagePath) fs.unlinkSync(imagePath);
-
-    res.json({ success: true, message: "Tweet berhasil diposting ✅" });
+    await postToTwitter(text);
+    res.json({ success: true, message: "Tweet berhasil diposting!" });
   } catch (err) {
-    console.error("❌ Gagal posting:", err);
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-app.listen(PORT, () => console.log(`✅ Server aktif di port ${PORT}`));
+// Port server Replit
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Server aktif di port ${PORT}`));
